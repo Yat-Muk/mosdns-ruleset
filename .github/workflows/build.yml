@@ -1,0 +1,100 @@
+name: Build mosdns ruleset
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 20 * * *"
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "**/README.md"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set variables
+        run: |
+          echo "update_version=$(date -d '+8 hours' +%Y-%m-%d)" >> ${GITHUB_ENV}
+          echo "ruleset_download_url=https://raw.githubusercontent.com/Yat-Muk/ruleset_geodata/sing-box-ruleset" >> ${GITHUB_ENV}
+        shell: bash
+
+      - name: Clone Repository
+        uses: actions/checkout@v2
+
+      - name: Checkout Yat-Muk/domain-list-custom
+        uses: actions/checkout@v4
+        with:
+          repository: Yat-Muk/domain-list-custom
+          path: custom
+     
+      - name: Checkout Yat-Muk/ruleset_geodata
+        uses: actions/checkout@v4
+        with:
+          repository: Yat-Muk/ruleset_geodata
+          path: sing-box-ruleset
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ./custom/go.mod
+          cache-dependency-path: ./custom/go.sum    
+
+      - name: Generate 'mosdns' ruleset
+        run: |
+          mkdir -p ./tmp/ ./mosdns-ruleset/
+          rules1=(ads proxy cn cnip games-cn apple-cn)
+          rules2=(private privateip)
+          
+          # 提取并转换规则文件为 mosdns 格式
+          for ((i = 0; i < 6; i++)); do
+            curl -sSL "${ruleset_download_url}/${rules1[i]}.json" | jq -r '.rules[] | (.domain[]?, .domain_keyword[]?, .domain_suffix[]?, .ip_cidr[]?)' > ./mosdns-ruleset/${rules1[i]}.txt
+          done
+          
+          for ((i = 0; i < 2; i++)); do
+          # 合并 private 和 privateip
+            curl -sSL "${ruleset_download_url}/${rules2[i]}.json" | jq -r '.rules[] | (.domain[]?, .domain_keyword[]?, .domain_suffix[]?, (.ip_cidr[]? | select(test("/128$") | not)))' | grep -vE '^(fc00::|fe80::|ff00::)' > ./tmp/${rules2[i]}.txt
+          done
+          cat ./tmp/private.txt ./tmp/privateip.txt > ./tmp/tmp-private.txt
+          mv -f ./tmp/tmp-private.txt ./mosdns-ruleset/private.txt
+
+          rm -rf tmp
+
+      - name: Release and upload 'mosdns' assets
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          release_name: mosdns-ruleset
+          tag: mosdns-ruleset
+          overwrite: true
+          body: "mosdns ruleset 规则集文件，包含 .txt 格式"
+          file_glob: true
+          file: ./mosdns-ruleset/*
+
+      - name: Git push assets to "mosdns" branch
+        run: |
+          cd ./mosdns-ruleset/ || exit 1
+          git init
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b mosdns-ruleset
+          git add .
+          git commit -m "MosDNS ruleset files updated on ${update_version}"
+          git remote add origin "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          git push -f -u origin mosdns-ruleset
+
+      - name: Purge jsDelivr CDN
+        run: |
+          cd ./mosdns-ruleset/ || exit 1
+          for file in $(ls); do
+            curl -i "https://purge.jsdelivr.net/gh/${{ github.repository }}@mosdns-ruleset/${file}"
+          done
+
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 3
+          keep_minimum_runs: 1
