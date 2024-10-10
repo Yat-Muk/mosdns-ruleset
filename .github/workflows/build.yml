@@ -44,11 +44,11 @@ jobs:
       - name: Generate 'mosdns' ruleset
         run: |
           mkdir -p ./tmp/ ./mosdns-ruleset/
-          rules1=(ads proxy cn cnip games-cn apple-cn)
+          rules1=(ads proxy cn cnip games-cn apple-cn netflixip telegramip)
           rules2=(private privateip)
           
           # 提取并转换规则文件为 mosdns 格式
-          for ((i = 0; i < 6; i++)); do
+          for ((i = 0; i < 8; i++)); do
             curl -sSL "${ruleset_download_url}/${rules1[i]}.json" | jq -r '.rules[] | (.domain[]?, .domain_keyword[]?, .domain_suffix[]?, .ip_cidr[]?)' > ./mosdns-ruleset/${rules1[i]}.txt
           done
           
