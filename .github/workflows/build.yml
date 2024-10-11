@@ -49,10 +49,10 @@ jobs:
           
           # 提取并转换规则文件为 mosdns 格式
           for ((i = 0; i < 8; i++)); do
-            if [[ "${rules1[i]}" == "cnip" || "${rules1[i]}" == "telegramip" || "${rules1[i]}" == "telegramip" ]]; then
-              curl -sSL "${ruleset_download_url}/${rules1[i]}.json" | jq -r '.rules[] | .ip_cidr[]?' > ./mosdns-ruleset/${rules1[i]}-all.txt
-              grep -v ":" ./mosdns-ruleset/${rules1[i]}-all.txt > ./mosdns-ruleset/${rules1[i]}_ipv4.txt
-              grep ":" ./mosdns-ruleset/${rules1[i]}-all.txt > ./mosdns-ruleset/${rules1[i]}_ipv6.txt
+            if [[ "${rules1[i]}" == "cnip" || "${rules1[i]}" == "netflixip" || "${rules1[i]}" == "telegramip" ]]; then
+              curl -sSL "${ruleset_download_url}/${rules1[i]}.json" | jq -r '.rules[] | .ip_cidr[]?' > ./mosdns-ruleset/${rules1[i]}.txt
+              grep -v ":" ./mosdns-ruleset/${rules1[i]}.txt > ./mosdns-ruleset/${rules1[i]}_ipv4.txt
+              grep ":" ./mosdns-ruleset/${rules1[i]}.txt > ./mosdns-ruleset/${rules1[i]}_ipv6.txt
             else
               curl -sSL "${ruleset_download_url}/${rules1[i]}.json" | jq -r '.rules[] | (.domain[]?, .domain_keyword[]?, .domain_suffix[]?, .ip_cidr[]?)' > ./mosdns-ruleset/${rules1[i]}.txt
             fi
