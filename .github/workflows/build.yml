@@ -17,51 +17,102 @@ jobs:
       - name: Set variables
         run: |
           echo "update_version=$(date -d '+8 hours' +%Y-%m-%d)" >> ${GITHUB_ENV}
+          # 保持远程下载链接
           echo "ruleset_download_url=https://raw.githubusercontent.com/Yat-Muk/ruleset_geodata/sing-box-ruleset" >> ${GITHUB_ENV}
         shell: bash
 
       - name: Clone Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout Yat-Muk/domain-list-custom
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: Yat-Muk/domain-list-custom
           path: custom
-     
+      
       - name: Checkout Yat-Muk/ruleset_geodata
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: Yat-Muk/ruleset_geodata
           path: sing-box-ruleset
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: ./custom/go.mod
-          cache-dependency-path: ./custom/go.sum    
+          cache-dependency-path: ./custom/go.sum      
 
       - name: Generate 'mosdns' ruleset
         run: |
+          set -e # 确保任何命令失败都会退出
           mkdir -p ./tmp/ ./mosdns-ruleset/
           rules1=(ads proxy cn cnip games-cn apple-cn netflixip telegramip)
           rules2=(private privateip)
           
           # 提取并转换规则文件为 mosdns 格式
           for ((i = 0; i < 8; i++)); do
-            if [[ "${rules1[i]}" == "cnip" || "${rules1[i]}" == "netflixip" || "${rules1[i]}" == "telegramip" ]]; then
-              curl -sSL "${ruleset_download_url}/${rules1[i]}.json" | jq -r '.rules[] | .ip_cidr[]?' > ./mosdns-ruleset/${rules1[i]}.txt
-              grep -v ":" ./mosdns-ruleset/${rules1[i]}.txt > ./mosdns-ruleset/${rules1[i]}_ipv4.txt
-              grep ":" ./mosdns-ruleset/${rules1[i]}.txt > ./mosdns-ruleset/${rules1[i]}_ipv6.txt
+            RULE_NAME="${rules1[i]}"
+            JSON_FILE="./tmp/${RULE_NAME}.json"
+            
+            echo "--- Downloading and processing: ${RULE_NAME}.json ---"
+            
+            # 1. 下载文件到临时文件
+            curl -sSL "${ruleset_download_url}/${RULE_NAME}.json" > "${JSON_FILE}"
+            
+            # 2. 检查下载的文件是否是有效的 JSON (检查文件是否以 { 或 [ 开头)
+            if ! head -n 1 "${JSON_FILE}" | grep -q '^{' ; then
+                echo "🚨 ERROR: File ${RULE_NAME}.json download failed or is not valid JSON."
+                echo "--- First 5 lines of downloaded content ---"
+                head -n 5 "${JSON_FILE}"
+                echo "----------------------------------------------------"
+                exit 1 # 下载内容不正确，退出工作流
+            fi
+            
+            # 3. 如果通过检查，则运行 jq
+            if [[ "${RULE_NAME}" == "cnip" || "${RULE_NAME}" == "netflixip" || "${RULE_NAME}" == "telegramip" ]]; then
+              cat "${JSON_FILE}" | jq -r '.rules[] | .ip_cidr[]?' > ./mosdns-ruleset/${RULE_NAME}.txt
+              grep -v ":" ./mosdns-ruleset/${RULE_NAME}.txt > ./mosdns-ruleset/${RULE_NAME}_ipv4.txt
+              grep ":" ./mosdns-ruleset/${RULE_NAME}.txt > ./mosdns-ruleset/${RULE_NAME}_ipv6.txt
             else
-              curl -sSL "${ruleset_download_url}/${rules1[i]}.json" | jq -r '.rules[] | (.domain[]?, .domain_keyword[]?, .domain_suffix[]?, .ip_cidr[]?)' > ./mosdns-ruleset/${rules1[i]}.txt
+              cat "${JSON_FILE}" | jq -r '.rules[] | (.domain[]?, .domain_keyword[]?, .domain_suffix[]?, .ip_cidr[]?)' > ./mosdns-ruleset/${RULE_NAME}.txt
+            fi
+            
+            # 4. 再次检查 jq 是否成功（虽然上面的检查应该能避免 jq 失败，但这是个好习惯）
+            if [ $? -ne 0 ]; then
+                echo "💥 ERROR: jq failed processing ${RULE_NAME}.json. Check the file content."
+                exit 1
             fi
           done
           
+          # 处理 rules2 (private 和 privateip)
           for ((i = 0; i < 2; i++)); do
-          # 合并 private 和 privateip
-            curl -sSL "${ruleset_download_url}/${rules2[i]}.json" | jq -r '.rules[] | (.domain[]?, .domain_keyword[]?, .domain_suffix[]?, (.ip_cidr[]? | select(test("/128$") | not)))' | grep -vE '^(fc00::|fe80::|ff00::)' > ./tmp/${rules2[i]}.txt
+            RULE_NAME="${rules2[i]}"
+            JSON_FILE="./tmp/${RULE_NAME}.json"
+            
+            echo "--- Downloading and processing: ${RULE_NAME}.json ---"
+            
+            # 1. 下载文件到临时文件
+            curl -sSL "${ruleset_download_url}/${RULE_NAME}.json" > "${JSON_FILE}"
+            
+            # 2. 检查下载的文件是否是有效的 JSON
+            if ! head -n 1 "${JSON_FILE}" | grep -q '^{' ; then
+                echo "🚨 ERROR: File ${RULE_NAME}.json download failed or is not valid JSON."
+                echo "--- First 5 lines of downloaded content ---"
+                head -n 5 "${JSON_FILE}"
+                echo "----------------------------------------------------"
+                exit 1 # 下载内容不正确，退出工作流
+            fi
+            
+            # 3. 运行 jq
+            cat "${JSON_FILE}" | jq -r '.rules[] | (.domain[]?, .domain_keyword[]?, .domain_suffix[]?, (.ip_cidr[]? | select(test("/128$") | not)))' | grep -vE '^(fc00::|fe80::|ff00::)' > ./tmp/${RULE_NAME}.txt
+            
+            # 4. 检查 jq 是否成功
+            if [ $? -ne 0 ]; then
+                echo "💥 ERROR: jq failed processing ${RULE_NAME}.json. Check the file content."
+                exit 1
+            fi
           done
+          
           cat ./tmp/private.txt ./tmp/privateip.txt > ./tmp/tmp-private.txt
           mv -f ./tmp/tmp-private.txt ./mosdns-ruleset/private.txt
 
